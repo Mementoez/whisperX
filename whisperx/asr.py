@@ -242,7 +242,7 @@ class FasterWhisperPipeline(Pipeline):
         return {"segments": segments, "language": language}
 
 
-    def detect_language(self, audio: np.ndarray):
+    def detect_language_pre_iakovakis(self, audio: np.ndarray):
         if audio.shape[0] < N_SAMPLES:
             print("Warning: audio is shorter than 30s, language detection may be inaccurate.")
         model_n_mels = self.model.feat_kwargs.get("feature_size")
@@ -255,6 +255,29 @@ class FasterWhisperPipeline(Pipeline):
         language = language_token[2:-2]
         print(f"Detected language: {language} ({language_probability:.2f}) in first 30s of audio...")
         return language
+    
+    def detect_language(self, audio: np.ndarray):
+            if audio.shape[0] < N_SAMPLES:
+                print("Warning: audio is shorter than 30s, language detection may be inaccurate.")
+            # Split audio into 30-second segments
+            num_segments = audio.shape[0] // N_SAMPLES
+            segments = [audio[i * N_SAMPLES : (i + 1) * N_SAMPLES] for i in range(num_segments)]
+            # Detect language in each segment
+            segment_languages = []
+            for segment in segments:
+                model_n_mels = self.model.feat_kwargs.get("feature_size")
+                segment_features = log_mel_spectrogram(segment,
+                                                    n_mels=model_n_mels if model_n_mels is not None else 80,
+                                                    padding=0 if len(segment) >= N_SAMPLES else N_SAMPLES - len(segment))
+                encoder_output = self.model.encode(segment_features)
+                results = self.model.model.detect_language(encoder_output)
+                language_token, language_probability = results[0][0]
+                language = language_token[2:-2]
+                segment_languages.append(language)
+            # Aggregate results using max-vote
+            dominant_language = max(set(segment_languages), key=segment_languages.count)
+            print(f"Dominant language: {dominant_language} (based on max-vote across segments)")
+            return dominant_language
 
 def load_model(whisper_arch,
                device,
